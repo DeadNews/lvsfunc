@@ -56,10 +56,11 @@ def _transpose_shift(n: int, f: vs.VideoFrame, clip: vs.VideoNode,
 
 
 def _perform_descale(resolution: Resolution, clip: vs.VideoNode,
+                     src_left: float, src_top: float,
                      kernel: kernels.Kernel) -> ScaleAttempt:
-    descaled = kernel.descale(clip, resolution.width, resolution.height) \
+    descaled = kernel.descale(clip, resolution.width, resolution.height, [src_left, src_top]) \
         .std.SetFrameProp('descaleResolution', intval=resolution.height)
-    rescaled = kernel.scale(descaled, clip.width, clip.height)
+    rescaled = kernel.scale(descaled, clip.width, clip.height, [-src_left, -src_top])
     diff = core.std.Expr([rescaled, clip], 'x y - abs').std.PlaneStats()
     return ScaleAttempt(descaled, rescaled, resolution, diff)
 
@@ -226,7 +227,8 @@ def descale(clip: vs.VideoNode,
         core.std.BlankClip(clip_y, length=1, width=clip.width + 1)
     ], mismatch=True)
 
-    descale_partial = partial(_perform_descale, clip=clip_y, kernel=kernel)
+    descale_partial = partial(_perform_descale, clip=clip_y, kernel=kernel,
+                              src_left=src_left, src_top=src_top)
     clips_by_resolution = {c.resolution.height:
                            c for c in map(descale_partial, resolutions)}
 
@@ -238,10 +240,6 @@ def descale(clip: vs.VideoNode,
     descaled = core.std.FrameEval(variable_res_clip, select_partial,
                                   prop_src=props)
 
-    if src_left != 0 or src_top != 0:
-        descaled = core.resize.Bicubic(descaled, src_left=src_left,
-                                       src_top=src_top)
-
     if upscaler is None:
         upscaled = descaled
         if len(height) == 1:
@@ -250,10 +248,6 @@ def descale(clip: vs.VideoNode,
             return upscaled
     else:
         upscaled = upscaler(descaled, clip.width, clip.height)
-
-    if src_left != 0 or src_top != 0:
-        upscaled = core.resize.Bicubic(descaled, src_left=-src_left,
-                                       src_top=-src_top)
 
     if upscaled.format is None:
         raise RuntimeError("descale: 'Upscaler cannot return variable-format clips'")
